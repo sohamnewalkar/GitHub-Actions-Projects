@@ -1,0 +1,225 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'Dockerfile'
+      - 'scripts/container/**'
+      - 'kubernetes/nginx/nginxconf/**'
+      - 'kubernetes/nginx/default.d/**'
+      - 'kubernetes/rsyslog/**'
+      - 'kubernetes/supervisor/**'
+      - 'kubernetes/ssl/**'
+      - 'kubernetes/nginx/acls/**'
+      - 'kubernetes/nginx/conf.d/**'
+      - 'kubernetes/nginx/ssl/**'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'Dockerfile'
+      - 'scripts/container/**'
+      - 'kubernetes/nginx/nginxconf/**'
+      - 'kubernetes/nginx/default.d/**'
+      - 'kubernetes/rsyslog/**'
+      - 'kubernetes/supervisor/**'
+      - 'kubernetes/ssl/**'
+      - 'kubernetes/nginx/acls/**'
+      - 'kubernetes/nginx/conf.d/**'
+      - 'kubernetes/nginx/ssl/**'
+
+jobs:
+  core_test:
+    runs-on: ubuntu-latest
+    needs: []
+    container:
+      image: azuseleveragedacr.azurecr.io/nginx:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Clean up old files and copy configuration
+        run: |
+          sudo rm -rf /etc/nginx /etc/ssl/private /etc/ssl/certs /var/www/html/*
+          sudo mkdir -pv /etc/nginx/acls /etc/nginx/conf.d /etc/nginx/default.d /etc/ssl/private /etc/ssl/certs /etc/nginx/ssl
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/nginxconf/* /etc/nginx/
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/www/* /var/www/html
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/ssl/certs/* /etc/ssl/certs
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/ssl/private/* /etc/ssl/private
+      - name: Test NGINX configuration
+        run: |
+          nginx -t
+
+  core_build:
+    runs-on: ubuntu-latest
+    needs: core_test
+    container:
+      image: gcr.io/kaniko-project/executor:debug
+      entrypoint: [ "" ]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up ACR authentication
+        run: |
+          mkdir -p /kaniko/.docker
+          echo "{\"auths\":{\"azuseleveragedacr.azurecr.io\":{\"auth\":\"$(echo -n ${ACR_USER}:${ACR_PASS} | base64 | tr -d "\n")\"}}}" > /kaniko/.docker/config.json
+      - name: Build and push Docker image to ACR
+        run: |
+          /kaniko/executor --context $GITHUB_WORKSPACE --dockerfile $GITHUB_WORKSPACE/Dockerfile --destination azuseleveragedacr.azurecr.io/nginx:latest
+
+  core_deploy:
+    runs-on: ubuntu-latest
+    needs: core_build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Deploy to Azure AKS
+        run: |
+          az aks get-credentials --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }}
+          scripts/cicd/deploy-all-azure.sh
+
+  # Site-specific test and deploy jobs
+  azuse_test:
+    runs-on: ubuntu-latest
+    needs: []
+    container:
+      image: azuseleveragedacr.azurecr.io/nginx:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Copy site-specific configuration
+        run: |
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/default.d /etc/nginx/default.d
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/acls/azuse_acls /etc/nginx/acls
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/conf.d/azuse_confd /etc/nginx/conf.d
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/ssl/azuse_ssl /etc/nginx/ssl
+      - name: Test NGINX configuration
+        run: |
+          nginx -t
+
+  azuse_deploy:
+    runs-on: ubuntu-latest
+    needs: azuse_test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Deploy azuse to AKS
+        run: |
+          scripts/cicd/deployaks.sh azuse
+
+  azaue_test:
+    runs-on: ubuntu-latest
+    needs: []
+    container:
+      image: azuseleveragedacr.azurecr.io/nginx:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Copy site-specific configuration
+        run: |
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/default.d /etc/nginx/default.d
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/acls/azaue_acls /etc/nginx/acls
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/conf.d/azaue_confd /etc/nginx/conf.d
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/ssl/azaue_ssl /etc/nginx/ssl
+      - name: Test NGINX configuration
+        run: |
+          nginx -t
+
+  azaue_deploy:
+    runs-on: ubuntu-latest
+    needs: azaue_test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Deploy azaue to AKS
+        run: |
+          scripts/cicd/deployaks.sh azaue
+
+  azuks_test:
+    runs-on: ubuntu-latest
+    needs: []
+    container:
+      image: azuseleveragedacr.azurecr.io/nginx:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Copy site-specific configuration
+        run: |
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/default.d /etc/nginx/default.d
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/acls/azuks_acls /etc/nginx/acls
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/conf.d/azuks_confd /etc/nginx/conf.d
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/ssl/azuks_ssl /etc/nginx/ssl
+      - name: Test NGINX configuration
+        run: |
+          nginx -t
+
+  azuks_deploy:
+    runs-on: ubuntu-latest
+    needs: azuks_test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Deploy azuks to AKS
+        run: |
+          scripts/cicd/deployaks.sh azuks
+
+  azbrs_test:
+    runs-on: ubuntu-latest
+    needs: []
+    container:
+      image: azuseleveragedacr.azurecr.io/nginx:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Copy site-specific configuration
+        run: |
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/default.d /etc/nginx/default.d
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/acls/azbrs_acls /etc/nginx/acls
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/conf.d/azbrs_confd /etc/nginx/conf.d
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/ssl/azbrs_ssl /etc/nginx/ssl
+      - name: Test NGINX configuration
+        run: |
+          nginx -t
+
+  azbrs_deploy:
+    runs-on: ubuntu-latest
+    needs: azbrs_test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Deploy azbrs to AKS
+        run: |
+          scripts/cicd/deployaks.sh azbrs
+
+  # Repeat the same pattern for all other sites
+  azdewc_test:
+    runs-on: ubuntu-latest
+    needs: []
+    container:
+      image: azuseleveragedacr.azurecr.io/nginx:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Copy site-specific configuration
+        run: |
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/default.d /etc/nginx/default.d
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/acls/azdewc_acls /etc/nginx/acls
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/conf.d/azdewc_confd /etc/nginx/conf.d
+          sudo cp -rv ${GITHUB_WORKSPACE}/kubernetes/nginx/ssl/azdewc_ssl /etc/nginx/ssl
+      - name: Test NGINX configuration
+        run: |
+          nginx -t
+
+  azdewc_deploy:
+    runs-on: ubuntu-latest
+    needs: azdewc_test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Deploy azdewc to AKS
+        run: |
+          scripts/cicd/deployaks.sh azdewc
+
+  # Continue for all other sites: azcac, azsea, azcae, azjpe, aznwe, azinc, azusw3, azuan, azeahk, azsan, azqtc
+
