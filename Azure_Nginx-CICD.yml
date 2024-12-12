@@ -64,9 +64,20 @@ jobs:
         run: |
           mkdir -p /kaniko/.docker
           echo "{\"auths\":{\"azuseleveragedacr.azurecr.io\":{\"auth\":\"$(echo -n ${ACR_USER}:${ACR_PASS} | base64 | tr -d "\n")\"}}}" > /kaniko/.docker/config.json
+      - name: Set up Artifactory authentication
+        run: |
+          mkdir -p /kaniko/.docker
+          echo "{\"auths\":{\"${ARTIFACTORY_URL}\":{\"auth\":\"$(echo -n ${ARTIFACTORY_USER}:${ARTIFACTORY_API_KEY} | base64 | tr -d "\n")\"}}}" > /kaniko/.docker/config.json
+      - name: Tag Docker image with version
+        run: |
+          VERSION_TAG=$(git rev-parse --short HEAD)  # Tag the image with the short Git commit hash
+          echo "VERSION_TAG=$VERSION_TAG" >> $GITHUB_ENV
       - name: Build and push Docker image to ACR
         run: |
           /kaniko/executor --context $GITHUB_WORKSPACE --dockerfile $GITHUB_WORKSPACE/Dockerfile --destination azuseleveragedacr.azurecr.io/nginx:latest
+      - name: Push Docker image to Artifactory
+        run: |
+          /kaniko/executor --context $GITHUB_WORKSPACE --dockerfile $GITHUB_WORKSPACE/Dockerfile --destination ${ARTIFACTORY_URL}/nginx:$VERSION_TAG
 
   core_deploy:
     runs-on: ubuntu-latest
@@ -79,7 +90,7 @@ jobs:
           az aks get-credentials --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AZURE_AKS_CLUSTER }}
           scripts/cicd/deploy-all-azure.sh
 
-  # Site-specific test and deploy jobs
+  # Site-specific test and deploy jobs (unchanged)
   azuse_test:
     runs-on: ubuntu-latest
     needs: []
